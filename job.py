@@ -5,34 +5,116 @@ from collections import deque
 
 class Job(object):
     def __init__(self, workList, rpcManager, eventQueue):
-        self.taskList = [Task(w, rpcManager, eventQueue) for w in workList]
+        self.status = "NEW"
+        self.scheduled = False
+        self.setup = False
+        self.killed = False
+        self.workList = workList
+        self.taskList = []
         self.rpcManager = rpcManager
         self.eventQueue = eventQueue
         self.eventsIn = deque()
     
     def applyRules(self):
         # Turn events into state changes
-        for eventType, value in list(self.eventsIn):
-            if eventType == "TA_ASSIGNED":
-                taskAttempt, container = value
-                taskAttempt.assignContainer(container)
-            if eventType == "JOB_UPDATED_NODES":
-                for task in self.taskList:
-                    task.nodeCrash(value)
-        self.eventsIn.clear()
+        self.handleEvents()
+        
+        if self.status == "NEW":
+            pass
+        elif self.status == "INITED":
+            pass 
+        elif self.status == "SETUP":
+            pass
+        elif self.status == "RUNNING":
+            allDone = True
+            for task in self.taskList:
+                if task.getStatus() == "KILLED_OR_FAILED":
+                    self.status = "FAILED"
+                    allDone = False
+                    break
+                if task.getStatus() == "RUNNING":
+                    allDone = False
+                    break
+            if allDone:
+                self.eventQueue.append(("JOB_COMMIT", self))
+                self.status = "COMMITTING"             
+        elif self.status == "COMMITTING":
+            pass
+        elif self.status == "SUCCEEDED":
+            pass
+        elif self.status == "FAILED":
+            for task in self.taskList:
+                task.kill()
         
         # Check for complete of failed tasks
         for task in self.taskList:
             task.applyRules()
     
+    def handleEvents(self):
+        # Turn events into state changes
+        for eventType, value in list(self.eventsIn):
+            # JobEventType Events
+            if eventType == "JOB_INIT":
+                if self.status == "NEW":
+                    self.taskList =[Task(w, self.rpcManager, self.eventQueue) for w in self.workList]
+                    self.status = "INITED"
+                    print "INITED"
+            if eventType == "JOB_START":
+                if self.status == "INITED":
+                    self.eventQueue.append(("JOB_SETUP", self))
+                    self.status = "SETUP"
+                    print "SETUP"
+            if eventType == "JOB_SETUP_COMPLETED":
+                if self.status == "SETUP" and value == self:
+                    self.setup = True
+                    for task in self.taskList:
+                        task.scheduled = True
+                    self.status = "RUNNING"
+                    print "RUNNING"
+            if eventType == "JOB_SETUP_FAILED":
+                if self.status == "SETUP" and value == self:
+                    self.status = "FAILED"
+            if eventType == "JOB_COMMIT_COMPLETED":
+                if self.status == "COMMITTING" and value == self:
+                    self.status = "SUCCEEDED"
+            if eventType == "JOB_COMMIT_FAILED":
+                if self.status == "COMMITTING" and value == self:
+                    self.status = "FAILED"
+            if eventType == "JOB_KILL":
+                self.eventQueue.append(("JOB_ABORT", self))
+                self.status = "FAILED"
+            if eventType == "JOB_ABORT_COMPLETED":
+                if self.status == "FAILED" and value == self:
+                    self.setup = False
+            if eventType == "JOB_UPDATED_NODES":
+                for task in self.taskList:
+                    task.nodeCrash(value)
+            if eventType == "JOB_DIAGNOSTIC_UPDATE":
+                # Do some update
+                pass
+            # TaskAttemptEventType Events
+            if eventType == "TA_ASSIGNED":
+                taskAttempt, container = value
+                taskAttempt.assignContainer(container)
+            if eventType == "TA_KILL":
+                taskAttempt, container = value
+                taskAttempt.kill()
+        self.eventsIn.clear()
+    
     def pushNewEvents(self, newEvents):
         self.eventsIn += newEvents
     
     def getStatus(self):
-        for task in self.taskList:
-            if task.getStatus() != "SUCCEEDED":
-                return "RUNNING"
-        return "SUCCEEDED"
+        if self.setup:
+            for task in self.taskList:
+                if task.getStatus() != "SUCCEEDED":
+                    return "RUNNING"
+            return "SUCCEEDED"
+        else:
+            for task in self.taskList:
+                if task.getStatus() != "KILLED_OR_FAILED":
+                    return "RUNNING"
+            return "FAILED"
         
     def __str__(self):
         s = ""
@@ -43,6 +125,7 @@ class Job(object):
 class Task(object):
     def __init__(self, work, rpcManager, eventQueue):
         self.commitLocator = None
+        self.scheduled = False
         self.killed = False
         self.work = work
         self.taskAttempts = []
@@ -67,11 +150,13 @@ class Task(object):
         if not self.taskResourcesAvailable():
             self.kill()
             
-        if not self.killed and self.commitLocator == None and self.shouldAddAttempt():
+        if self.scheduled and not self.killed and self.commitLocator == None and self.shouldAddAttempt():
             self.taskAttempts.append(TaskAttempt(self.work, self.rpcManager, self.eventQueue))
-        # Need to keep trying unless there is an abort.  Node crashes should trigger reexecution.
         
     def getStatus(self):
+        if not self.scheduled:
+            return "NEW"
+
         if len(self.taskAttempts) == 0:
             if not self.killed:
                 if self.commitLocator != None:
@@ -105,7 +190,7 @@ class Task(object):
         return True 
     
     def __str__(self):
-        return "<{0}: {1} {2}>".format(self.work, self.commitLocator, [str(a) for a in self.taskAttempts])
+        return "<{0}: {1} {2}>".format(self.work, self.getStatus(), self.commitLocator)
 
 class TaskAttempt(object):
     def __init__(self, work, rpcManager, eventQueue):
@@ -116,32 +201,7 @@ class TaskAttempt(object):
         self.time = None
         self.rpcManager = rpcManager
         self.eventQueue = eventQueue
-    
-    def assignContainer(self, container):
-        if self.container == None:
-            print "Container Assigned: " + str(container) + " to " + str(self.work)
-            self.container = container
-    
-    def kill(self):
-        # performs CONTAINER_REMOTE_CLEANUP
-        if self.status == "SUCCEEDED":
-            pass
-        else:
-            if self.container != None:
-                self.rpc = RPC(self.container, None, ("CONTAINER_REMOTE_CLEANUP", self.work))
-                self.rpcManager.send(self.rpc)
-            self.status = "FAILED"
-
-    def nodeCrash(self, container):
-        if self.container == container:
-            self.rpc = None
-            self.status = "FAILED"
         
-    def getStatus(self):
-        if self.status in ("FAILED", "SUCCEEDED") and self.rpc == None:
-            return self.status
-        return "PENDING"
-    
     def applyRules(self):
         if self.status == "NEW":
             # Generating a CONTAINER_REQ "event"
@@ -175,6 +235,31 @@ class TaskAttempt(object):
             if self.rpc and self.rpc.status == "complete":
                 self.rpc = None
                 self.eventQueue.append(("CONTAINER_FAILED", (self, self.container)))
+    
+    def assignContainer(self, container):
+        if self.container == None:
+            print "Container Assigned: " + str(container) + " to " + str(self.work)
+            self.container = container
+    
+    def kill(self):
+        # performs CONTAINER_REMOTE_CLEANUP
+        if self.status == "SUCCEEDED":
+            pass
+        else:
+            if self.container != None:
+                self.rpc = RPC(self.container, None, ("CONTAINER_REMOTE_CLEANUP", self.work))
+                self.rpcManager.send(self.rpc)
+            self.status = "FAILED"
+
+    def nodeCrash(self, container):
+        if self.container == container:
+            self.rpc = None
+            self.status = "FAILED"
+        
+    def getStatus(self):
+        if self.status in ("FAILED", "SUCCEEDED") and self.rpc == None:
+            return self.status
+        return "PENDING"
                     
     def __str__(self):
         return "<{0}: {1} {2}>".format(self.work, self.status, self.container)

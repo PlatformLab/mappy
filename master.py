@@ -14,6 +14,7 @@ from docopt import docopt
 from rpc import RPCManager
 from session import MasterSessionManager
 from RMContainerAllocator import RMContainerAllocator
+from CommitterEventHandler import CommitterEventHandler
 from job import Job, Task
 
 import sys
@@ -35,6 +36,7 @@ def run(IP, PORT):
     sessionManager = MasterSessionManager(IP, PORT, processQ)
     rpcManager = RPCManager(sessionManager, processQ)
     containerAllocator = RMContainerAllocator(eventQueue, sessionManager)
+    committerEventHandler = CommitterEventHandler(eventQueue)
     printed = False;
     serverList = []
     assignedServers = []
@@ -42,15 +44,22 @@ def run(IP, PORT):
     
     job = Job(work, rpcManager, eventQueue)
     
+    # Simulate Delayed Job init and start.
+    eventQueue.append(("JOB_INIT", job))
+    eventQueue.append(("JOB_START", job))
+    
     while True:
         # Simulate "event delivery"
         containerAllocator.pushNewEvents(eventQueue)
+        committerEventHandler.pushNewEvents(eventQueue)
         job.pushNewEvents(eventQueue)
         eventQueue.clear()
         
+        # Simulate async mechanisums
         sessionManager.poll()
         rpcManager.poll()
         containerAllocator.heartbeat()
+        committerEventHandler.heartbeat()
         
         # For server failure
         for locator in serverList:

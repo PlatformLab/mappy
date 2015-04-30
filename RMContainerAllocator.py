@@ -1,4 +1,5 @@
 from collections import deque
+# import time
 
 class RMContainerAllocator(object):
     def __init__(self, eventQueue, sessionManager):
@@ -7,6 +8,7 @@ class RMContainerAllocator(object):
         self.sessionManager = sessionManager
         self.eventsIn = deque()
         self.eventsOut = eventQueue
+        # self.time = time.time()
     
     def heartbeat(self):
         if len(self.eventsIn) > 0:
@@ -21,6 +23,10 @@ class RMContainerAllocator(object):
             if eventType in ("CONTAINER_DEALLOCATE", "CONTAINER_FAILED"):
                 taskAttempt, container = value
                 self.containerDeallocate(taskAttempt, container)
+            # if time.time() - self.time > 5:
+            #     if len(self.assignedTasks) > 0:
+            #         self.eventsOut.append(("TA_KILL", self.assignedTasks.items().pop()))
+            #     self.time = time.time()
         
     def pushNewEvents(self, newEvents):
         self.eventsIn += newEvents
