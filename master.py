@@ -18,6 +18,7 @@ from job import Task
 
 import math
 from multiprocessing import Queue
+from collections import deque
 import time
 from random import choice
 from collections import defaultdict
@@ -25,28 +26,36 @@ from collections import defaultdict
 work = range(10)
 
 def run(IP, PORT):
+    # Simulated "event queue"
+    eventQueue = deque()
+    
+    # Process queue used for async rpc system.
     processQ = Queue()
     sessionManager = MasterSessionManager(IP, PORT, processQ)
     rpcManager = RPCManager(sessionManager, processQ)
-    containerAllocator = RMContainerAllocator(sessionManager)
+    containerAllocator = RMContainerAllocator(eventQueue, sessionManager)
     taskList = []
     # Make tasks
     for w in work:
-        taskList.append(Task(w, rpcManager, containerAllocator))
+        taskList.append(Task(w, rpcManager, eventQueue))
     allDone = False;
     serverList = []
     assignedServers = []
     serverAssignments = defaultdict(list)
+    
     while True:
-        sessionManager.poll()
-        rpcManager.poll()
-        containerAllocator.heartbeat()
-        
+        # Simulate "event delivery"
+        containerAllocator.pushNewEvents(eventQueue)
         # Turn events into state changes
-        for eventType, value in containerAllocator.getNewEvents():
+        for eventType, value in list(eventQueue):
             if eventType == "TA_ASSIGNED":
                 taskAttempt, container = value
                 taskAttempt.assignContainer(container)
+        eventQueue.clear()
+        
+        sessionManager.poll()
+        rpcManager.poll()
+        containerAllocator.heartbeat()
         
         # For server failure
         for locator in serverList:

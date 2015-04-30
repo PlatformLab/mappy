@@ -3,14 +3,14 @@ from rpc import RPC
 import time
 
 class Task(object):
-    def __init__(self, work, rpcManager, containerAllocator):
+    def __init__(self, work, rpcManager, eventQueue):
         self.commitLocator = None
         self.killed = False
         self.work = work
         self.taskAttempts = []
         self.time = None
         self.rpcManager = rpcManager
-        self.containerAllocator = containerAllocator
+        self.eventQueue = eventQueue
     
     def applyRules(self):
         # Make sure the subtasks are run
@@ -30,7 +30,7 @@ class Task(object):
             self.kill()
             
         if not self.killed and self.commitLocator == None and self.shouldAddAttempt():
-            self.taskAttempts.append(TaskAttempt(self.work, self.rpcManager, self.containerAllocator))
+            self.taskAttempts.append(TaskAttempt(self.work, self.rpcManager, self.eventQueue))
         # Need to keep trying unless there is an abort.  Node crashes should trigger reexecution.
         
     def getStatus(self):
@@ -70,14 +70,14 @@ class Task(object):
         return "<{0}: {1} {2}>".format(self.work, self.commitLocator, [str(a) for a in self.taskAttempts])
 
 class TaskAttempt(object):
-    def __init__(self, work, rpcManager, containerAllocator):
+    def __init__(self, work, rpcManager, eventQueue):
         self.status = "NEW"
         self.container = None
         self.work = work
         self.rpc = None
         self.time = None
         self.rpcManager = rpcManager
-        self.containerAllocator = containerAllocator
+        self.eventQueue = eventQueue
     
     def assignContainer(self, container):
         if self.container == None:
@@ -107,7 +107,7 @@ class TaskAttempt(object):
     def applyRules(self):
         if self.status == "NEW":
             # Generating a CONTAINER_REQ "event"
-            self.containerAllocator.putNewEvents([("CONTAINER_REQ", (self, None))])
+            self.eventQueue.append(("CONTAINER_REQ", (self, None)))
             self.status = "UNASSIGNED"
         elif self.status == "UNASSIGNED":
             if self.container != None:
@@ -130,13 +130,13 @@ class TaskAttempt(object):
                 if self.rpc.reply != "failed":
                     self.status = "SUCCEEDED"
                     self.rpc = None
-                    self.containerAllocator.putNewEvents([("CONTAINER_DEALLOCATE", (self, self.container))])
+                    self.eventQueue.append(("CONTAINER_DEALLOCATE", (self, self.container)))
                 else:
                     self.kill()
         elif self.status == "FAILED":
             if self.rpc and self.rpc.status == "complete":
                 self.rpc = None
-                self.containerAllocator.putNewEvents([("CONTAINER_FAILED", (self, self.container))])
+                self.eventQueue.append(("CONTAINER_FAILED", (self, self.container)))
                     
     def __str__(self):
         return "<{0}: {1} {2}>".format(self.work, self.status, self.container)

@@ -1,12 +1,12 @@
 from collections import deque
 
 class RMContainerAllocator(object):
-    def __init__(self, sessionManager):
+    def __init__(self, eventQueue, sessionManager):
         self.assignedServers = []
         self.assignedTasks = {}
         self.sessionManager = sessionManager
         self.eventsIn = deque()
-        self.eventsOut = []
+        self.eventsOut = eventQueue
     
     def heartbeat(self):
         if len(self.eventsIn) > 0:
@@ -21,14 +21,8 @@ class RMContainerAllocator(object):
             if eventType in ("CONTAINER_DEALLOCATE", "CONTAINER_FAILED"):
                 taskAttempt, container = value
                 self.containerDeallocate(taskAttempt, container)
-    
-    # returns JOB_UPDATED_NODES, JOB_AM_REBOOT, TA_KILL, JOB_KILL
-    def getNewEvents(self):
-        events = self.eventsOut
-        self.eventsOut = []
-        return events
         
-    def putNewEvents(self, newEvents):
+    def pushNewEvents(self, newEvents):
         self.eventsIn += newEvents
     
     # choose a container based on some objective function
