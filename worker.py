@@ -53,7 +53,7 @@ def run(IP, PORT, mIP, mPORT):
                         working = rpc
                         rpc.status = "working"
                         continue
-                elif rpcType == "ABORT":
+                elif rpcType == "CONTAINER_REMOTE_CLEANUP":
                     state = "CLEANUP"
                     if working != None:
                         working.reply = "failed"

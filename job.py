@@ -5,7 +5,7 @@ import time
 class Task(object):
     def __init__(self, work, rpcManager, containerAllocator):
         self.commitLocator = None
-        self.aborted = False
+        self.killed = False
         self.work = work
         self.taskAttempts = []
         self.time = None
@@ -20,27 +20,30 @@ class Task(object):
             elif taskAttempt.getStatus() == "SUCCEEDED":
                 if self.commitLocator == None:
                     self.commitLocator = taskAttempt.container
-                else:
-                    self.taskAttempts.remove(taskAttempt)
+                self.taskAttempts.remove(taskAttempt)
             else:
                 if self.commitLocator != None:
-                    taskAttempt.abort()
+                    taskAttempt.kill()
                 taskAttempt.applyRules()
         
         if not self.taskResourcesAvailable():
-            self.abort()
-
-        if not self.aborted and self.commitLocator == None and self.shouldAddAttempt():
+            self.kill()
+            
+        if not self.killed and self.commitLocator == None and self.shouldAddAttempt():
             self.taskAttempts.append(TaskAttempt(self.work, self.rpcManager, self.containerAllocator))
+        # Need to keep trying unless there is an abort.  Node crashes should trigger reexecution.
         
     def getStatus(self):
-        if len(self.taskAttempts) != 0:
-            return "RUNNING"
-        elif self.commitLocator == None:
-            return "KILLED_OR_FAILED"
+        if len(self.taskAttempts) == 0:
+            if not self.killed:
+                if self.commitLocator != None:
+                    return "SUCCEEDED"
+                else:
+                    return "RUNNING"
+            else:
+                return "KILLED_OR_FAILED"
         else:
-            return "SUCCEEDED"
-                
+            return "RUNNING"
         
     # Some policy for whether an attempt should be issued.
     # Same affect as if an event T_ADD_SPEC_ATTEMPT was generated
@@ -48,12 +51,15 @@ class Task(object):
         if len(self.taskAttempts) == 0:
             return True
             
-    def abort(self):
-        self.aborted = True
+    def kill(self):
+        self.killed = True
+        self.commitLocator = None
         for taskAttempt in self.taskAttempts:
-            taskAttempt.abort(container)
+            taskAttempt.kill(container)
         
     def nodeCrash(self, container):
+        if container == self.commitLocator:
+            self.commitLocator = None
         for taskAttempt in self.taskAttempts:
             taskAttempt.nodeCrash(container)
     
@@ -61,7 +67,7 @@ class Task(object):
         return True 
     
     def __str__(self):
-        return "<{0}: {1}>".format(self.work, self.commitLocator)
+        return "<{0}: {1} {2}>".format(self.work, self.commitLocator, [str(a) for a in self.taskAttempts])
 
 class TaskAttempt(object):
     def __init__(self, work, rpcManager, containerAllocator):
@@ -78,13 +84,13 @@ class TaskAttempt(object):
             print "Container Assigned: " + str(container) + " to " + str(self.work)
             self.container = container
     
-    def abort(self):
+    def kill(self):
         # performs CONTAINER_REMOTE_CLEANUP
         if self.status == "SUCCEEDED":
             pass
         else:
             if self.container != None:
-                self.rpc = RPC(self.container, None, ("ABORT", self.work))
+                self.rpc = RPC(self.container, None, ("CONTAINER_REMOTE_CLEANUP", self.work))
                 self.rpcManager.send(self.rpc)
             self.status = "FAILED"
 
@@ -118,7 +124,7 @@ class TaskAttempt(object):
                     self.rpcManager.send(self.rpc)
                     self.status = "COMMIT_PENDING"
                 else:
-                    self.abort()
+                    self.kill()
         elif self.status == "COMMIT_PENDING":
             if self.rpc.status == "complete":
                 if self.rpc.reply != "failed":
@@ -126,7 +132,7 @@ class TaskAttempt(object):
                     self.rpc = None
                     self.containerAllocator.putNewEvents([("CONTAINER_DEALLOCATE", (self, self.container))])
                 else:
-                    self.abort()
+                    self.kill()
         elif self.status == "FAILED":
             if self.rpc and self.rpc.status == "complete":
                 self.rpc = None
