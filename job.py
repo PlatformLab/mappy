@@ -1,6 +1,44 @@
 from rpc import RPC
 
 import time
+from collections import deque
+
+class Job(object):
+    def __init__(self, workList, rpcManager, eventQueue):
+        self.taskList = [Task(w, rpcManager, eventQueue) for w in workList]
+        self.rpcManager = rpcManager
+        self.eventQueue = eventQueue
+        self.eventsIn = deque()
+    
+    def applyRules(self):
+        # Turn events into state changes
+        for eventType, value in list(self.eventsIn):
+            if eventType == "TA_ASSIGNED":
+                taskAttempt, container = value
+                taskAttempt.assignContainer(container)
+            if eventType == "JOB_UPDATED_NODES":
+                for task in self.taskList:
+                    task.nodeCrash(value)
+        self.eventsIn.clear()
+        
+        # Check for complete of failed tasks
+        for task in self.taskList:
+            task.applyRules()
+    
+    def pushNewEvents(self, newEvents):
+        self.eventsIn += newEvents
+    
+    def getStatus(self):
+        for task in self.taskList:
+            if task.getStatus() != "SUCCEEDED":
+                return "RUNNING"
+        return "SUCCEEDED"
+        
+    def __str__(self):
+        s = ""
+        for task in self.taskList:
+            s = s + str(task) + "\n"
+        return s
 
 class Task(object):
     def __init__(self, work, rpcManager, eventQueue):

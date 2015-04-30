@@ -14,8 +14,9 @@ from docopt import docopt
 from rpc import RPCManager
 from session import MasterSessionManager
 from RMContainerAllocator import RMContainerAllocator
-from job import Task
+from job import Job, Task
 
+import sys
 import math
 from multiprocessing import Queue
 from collections import deque
@@ -34,23 +35,17 @@ def run(IP, PORT):
     sessionManager = MasterSessionManager(IP, PORT, processQ)
     rpcManager = RPCManager(sessionManager, processQ)
     containerAllocator = RMContainerAllocator(eventQueue, sessionManager)
-    taskList = []
-    # Make tasks
-    for w in work:
-        taskList.append(Task(w, rpcManager, eventQueue))
-    allDone = False;
+    printed = False;
     serverList = []
     assignedServers = []
     serverAssignments = defaultdict(list)
     
+    job = Job(work, rpcManager, eventQueue)
+    
     while True:
         # Simulate "event delivery"
         containerAllocator.pushNewEvents(eventQueue)
-        # Turn events into state changes
-        for eventType, value in list(eventQueue):
-            if eventType == "TA_ASSIGNED":
-                taskAttempt, container = value
-                taskAttempt.assignContainer(container)
+        job.pushNewEvents(eventQueue)
         eventQueue.clear()
         
         sessionManager.poll()
@@ -60,38 +55,18 @@ def run(IP, PORT):
         # For server failure
         for locator in serverList:
             if (locator not in sessionManager.serverList()):
-                for task in taskList:
-                    task.nodeCrash(locator)
+                eventQueue.append(("JOB_UPDATED_NODES", locator))
         if serverList != sessionManager.serverList():
             print "serverList change"
         serverList = sessionManager.serverList()
-        for locator in assignedServers:
-            if locator not in serverList:
-                assignedServers.remove(locator)
     
-        # Check for complete of failed tasks
-        for task in taskList:
-            task.applyRules()
+        # Run rules engine
+        job.applyRules()
 
-        # Hope we are all done
-        if allDone == False:
-            allDone = True
-            for task in taskList:
-                if task.getStatus() != "SUCCEEDED":
-                    allDone = False
-                    break
-            if allDone:
-                print "ALL DONE!"
-                for task in taskList:
-                    print task
-        else:
-            for task in taskList:
-                if task.getStatus() != "SUCCEEDED":
-                    allDone = False
-                    break
-            if not allDone:
-                print "Failure after complete"
-        
+        if job.getStatus() == "SUCCEEDED" and not printed:
+            print "Job Complete"
+            print job
+            printed = True
 
 if __name__ == '__main__':
     args = docopt(__doc__)
