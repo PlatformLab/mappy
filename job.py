@@ -3,47 +3,65 @@ from rpc import RPC
 import time
 
 class Task(object):
-    def __init__(self, work):
-        self.status = "unassigned"
+    def __init__(self, work, rpcManager, containerAllocator):
+        self.commitLocator = None
+        self.aborted = False
         self.work = work
         self.taskAttempts = []
         self.time = None
+        self.rpcManager = rpcManager
+        self.containerAllocator = containerAllocator
     
     def applyRules(self):
-        pass
-    
-    def assign(self, locator, rpc):
-        self.assignment.append(locator)
-        self.status = "assigned"
-        self.rpcs.append(rpc)
-        self.time = time.time()
-    
-    def poll(self, assignedServers):
-        for rpc in self.rpcs:
-            if rpc.status == "complete":
-                self.complete(rpc.locator)
-                assignedServers.remove(rpc.locator)
-                self.rpcs.remove(rpc)
-            elif rpc.status == "failed":
-                self.failure(rpc.locator)
-                self.rpcs.remove(rpc)
-    
-    def complete(self, locator):
-        if self.status != "complete":
-            self.status = "complete"
-            self.assignment = []
-        self.assignment.append(locator)
+        # Make sure the subtasks are run
+        for taskAttempt in list(self.taskAttempts):
+            if taskAttempt.getStatus() == "FAILED":
+                self.taskAttempts.remove(taskAttempt)
+            elif taskAttempt.getStatus() == "SUCCEEDED":
+                if self.commitLocator == None:
+                    self.commitLocator = taskAttempt.container
+                else:
+                    self.taskAttempts.remove(taskAttempt)
+            else:
+                if self.commitLocator != None:
+                    taskAttempt.abort()
+                taskAttempt.applyRules()
+        
+        if not self.taskResourcesAvailable():
+            self.abort()
 
-    def failure(self, locator):
-        if locator in self.assignment:
-            self.assignment.remove(locator)
-            print self.assignment
-        if len(self.assignment) == 0:
-            self.status = "unassigned"
-            print "TASK Failed"
+        if not self.aborted and self.commitLocator == None and self.shouldAddAttempt():
+            self.taskAttempts.append(TaskAttempt(self.work, self.rpcManager, self.containerAllocator))
+        
+    def getStatus(self):
+        if len(self.taskAttempts) != 0:
+            return "RUNNING"
+        elif self.commitLocator == None:
+            return "KILLED_OR_FAILED"
+        else:
+            return "SUCCEEDED"
+                
+        
+    # Some policy for whether an attempt should be issued.
+    # Same affect as if an event T_ADD_SPEC_ATTEMPT was generated
+    def shouldAddAttempt(self):
+        if len(self.taskAttempts) == 0:
+            return True
+            
+    def abort(self):
+        self.aborted = True
+        for taskAttempt in self.taskAttempts:
+            taskAttempt.abort(container)
+        
+    def nodeCrash(self, container):
+        for taskAttempt in self.taskAttempts:
+            taskAttempt.nodeCrash(container)
+    
+    def taskResourcesAvailable(self):
+        return True 
     
     def __str__(self):
-        return "<{0}: {1} {2}>".format(self.work, self.status, self.assignment)
+        return "<{0}: {1}>".format(self.work, self.commitLocator)
 
 class TaskAttempt(object):
     def __init__(self, work, rpcManager, containerAllocator):
@@ -76,7 +94,7 @@ class TaskAttempt(object):
             self.status = "FAILED"
         
     def getStatus(self):
-        if self.status in ("FAILED", "SUCCEEDED") and self.rpc != None:
+        if self.status in ("FAILED", "SUCCEEDED") and self.rpc == None:
             return self.status
         return "PENDING"
     
@@ -105,6 +123,7 @@ class TaskAttempt(object):
             if self.rpc.status == "complete":
                 if self.rpc.reply != "failed":
                     self.status = "SUCCEEDED"
+                    self.rpc = None
                     self.containerAllocator.putNewEvents([("CONTAINER_DEALLOCATE", (self, self.container))])
                 else:
                     self.abort()

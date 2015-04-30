@@ -14,7 +14,7 @@ from docopt import docopt
 from rpc import RPCManager
 from session import MasterSessionManager
 from RMContainerAllocator import RMContainerAllocator
-from job import TaskAttempt
+from job import Task
 
 import math
 from multiprocessing import Queue
@@ -32,7 +32,7 @@ def run(IP, PORT):
     taskList = []
     # Make tasks
     for w in work:
-        taskList.append(TaskAttempt(w, rpcManager, containerAllocator))
+        taskList.append(Task(w, rpcManager, containerAllocator))
     allDone = False;
     serverList = []
     assignedServers = []
