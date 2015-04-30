@@ -31,23 +31,78 @@ def run(IP, PORT, mIP, mPORT):
     sessionManager = WorkerSessionManager(IP, PORT, mIP, mPORT, processQ)
     rpcManager = RPCManager(sessionManager, processQ)
     working = None
+    state = "IDLE";
+    doneTime = 0
     while True:
         sessionManager.poll()
         rpcManager.poll()
-        if working == None:
-            for rpc in rpcManager.inRPC.values():
-                if rpc.status == "pending":
-                    rpc.temp = time.time() + 5.0 + RAND * gauss(0.0, 1.0)
-                    rpc.status = "working"
+        
+        # Convert incoming RPCs (events) into state changes
+        for rpc in rpcManager.inRPC.values():
+            if rpc.status == "pending":
+                rpcType, payload = rpc.msg
+                if rpcType == "LAUNCH":
+                    if state == "IDLE":
+                        state = "RUNNING"
+                        working = rpc
+                        rpc.status = "working"
+                        continue
+                elif rpcType == "COMMIT":
+                    if state == "COMPLETE":
+                        state = "COMMITTING"
+                        working = rpc
+                        rpc.status = "working"
+                        continue
+                elif rpcType == "ABORT":
+                    state = "CLEANUP"
+                    if working != None:
+                        working.reply = "failed"
+                        working.status = "send"
                     working = rpc
-                    print "Working Assigned: ", working.msg, working.locator
-                    break
-        else:
-            if time.time() > working.temp:
+                    rpc.status = "working"
+                    continue
+                elif rpcType == "DIE":
+                    sys.exit(0)
+                
+                rpc.reply = "failed"
+                rpc.status = "send"
+                    
+        # Rules engine
+        if state == "IDLE":
+            pass
+        elif state == "RUNNING":
+            # simulate random completion time
+            if doneTime == 0:
+                doneTime = time.time() + 5.0 + RAND * gauss(0.0, 1.0)
+            if time.time() > doneTime:
                 working.reply = working.msg
                 working.status = "send"
                 print "Work Finished: ", working.msg, working.locator
                 working = None
+                doneTime = 0
+                state = "COMPLETE"
+        elif state == "COMPLETE":
+            pass
+        elif state == "COMMITTING":
+            # simulate random commit time
+            if doneTime == 0:
+                doneTime = time.time() + 2.0 + RAND * gauss(0.0, 1.0)
+            if time.time() > doneTime:
+                print "Work Committed: ", working.msg, working.locator
+                doneTime = 0
+                state = "CLEANUP"
+        elif state == "CLEANUP":
+            # simulate random cleaup time
+            if doneTime == 0:
+                doneTime = time.time() + 1.0 + RAND * gauss(0.0, 1.0)
+            if time.time() > doneTime:
+                working.reply = working.msg
+                working.status = "send"
+                print "Container Clean: ", working.msg, working.locator
+                working = None
+                doneTime = 0
+                state = "IDLE"
+
         # Kill failed RPCs
         for key in rpcManager.outRPC.keys():
             if rpcManager.outRPC[key].status == "failed":
@@ -55,7 +110,6 @@ def run(IP, PORT, mIP, mPORT):
         
         if DIE and time.time() > TTL:
             sys.exit(0)
-            
     
 
 if __name__ == '__main__':

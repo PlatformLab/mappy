@@ -62,17 +62,78 @@ class Task(object):
     def __str__(self):
         return "<{0}: {1} {2}>".format(self.work, self.status, self.assignment)
 
-def chooseServer(serverList, serverAssignments, assignedServers, task):
-    # Chose the server with the least assignments that doesn't alread have it
-    # assigned
-    server = None
+class TaskAttempt(object):
+    def __init__(self, work, rpcManager):
+        self.status = "NEW"
+        self.container = None
+        self.work = work
+        self.rpc = None
+        self.time = None
+        self.rpcManager = rpcManager
+
+    def assignContainer(self, container):
+        if self.container == None:
+            print "Container Assigned: " + str(container) + " to " + str(self.work)
+            self.container = container
+    
+    def abort(self):
+        # performs CONTAINER_REMOTE_CLEANUP
+        if self.container != None:
+            self.rpc = RPC(self.container, None, ("ABORT", self.work))
+            self.rpcManager.send(self.rpc)
+        self.status = "FAILED"
+
+    def nodeCrash(self, container):
+        if self.container == container:
+            self.rpc = None
+            self.status = "FAILED"
+        
+    def getStatus(self):
+        if self.status in ("FAILED", "SUCCEEDED") and self.rpc != None:
+            return self.status
+        return "PENDING"
+    
+    def applyRules(self, assignedServers):
+        if self.container:
+            if self.status == "NEW":
+                self.rpc = RPC(self.container, None, ("LAUNCH", self.work))
+                self.rpcManager.send(self.rpc)
+                self.status = "RUNNING"
+                self.time = time.time()
+            elif self.status == "RUNNING":
+                if self.rpc.status == "complete":
+                    if self.rpc.reply != "failed":
+                        self.rpc = RPC(self.container, None, ("COMMIT", self.work))
+                        self.rpcManager.send(self.rpc)
+                        self.status = "COMMIT_PENDING"
+                    else:
+                        self.abort()
+            elif self.status == "COMMIT_PENDING":
+                if self.rpc.status == "complete":
+                    if self.rpc.reply != "failed":
+                        self.status = "SUCCEEDED"
+                        assignedServers.remove(self.container)
+                    else:
+                        self.abort()
+            elif self.status == "FAILED":
+                if self.rpc and self.rpc.status == "complete":
+                    self.rpc = None
+                    assignedServers.remove(self.container)
+                    
+    def __str__(self):
+        return "<{0}: {1} {2}>".format(self.work, self.status, self.container)
+
+# choose a container based on some objective function
+def chooseContainer(serverList, assignedServers, task):
+    container = None
     for locator in serverList:
-        if (locator not in assignedServers and
-            task not in serverAssignments[locator] and
-            (server == None or
-             len(serverAssignments[locator]) < len(serverAssignments[server]))):
-            server = locator
-    return server
+        if locator not in assignedServers:
+            container = locator
+            break
+    if container != None:
+        print "Container Chosen for work " + str(task.work)
+        assignedServers.append(container)
+        task.assignContainer(container)
     
 def assignTask(rpcManager, serverList, serverAssignments, assignedServers, task):
     locator = chooseServer(serverList, serverAssignments, assignedServers, task)
@@ -90,7 +151,7 @@ def run(IP, PORT):
     taskList = []
     # Make tasks
     for w in work:
-        taskList.append(Task(w))
+        taskList.append(TaskAttempt(w, rpcManager))
     allDone = False;
     serverList = []
     assignedServers = []
@@ -103,7 +164,9 @@ def run(IP, PORT):
         for locator in serverList:
             if (locator not in sessionManager.serverList()):
                 for task in taskList:
-                    task.failure(locator)
+                    task.nodeCrash(locator)
+        if serverList != sessionManager.serverList():
+            print "serverList change"
         serverList = sessionManager.serverList()
         for locator in assignedServers:
             if locator not in serverList:
@@ -111,21 +174,17 @@ def run(IP, PORT):
     
         # Check for complete of failed tasks
         for task in taskList:
-            task.poll(assignedServers)
+            task.applyRules(assignedServers)
 
         for task in taskList:
-            # Assign Work or
-            # Reassign work if it seems to be taking a while
-            if (len(serverList) > len(assignedServers) and
-                (task.status == "unassigned" or 
-                task.status != "complete" and time.time() - task.time > 5 * 1.1)):
-                assignTask(rpcManager, serverList, serverAssignments, assignedServers, task)
+            if task.container == None:
+                chooseContainer(serverList, assignedServers, task)
 
         # Hope we are all done
         if allDone == False:
             allDone = True
             for task in taskList:
-                if task.status != "complete":
+                if task.getStatus() != "SUCCEEDED":
                     allDone = False
                     break
             if allDone:
@@ -134,7 +193,7 @@ def run(IP, PORT):
                     print task
         else:
             for task in taskList:
-                if task.status != "complete":
+                if task.getStatus() != "SUCCEEDED":
                     allDone = False
                     break
             if not allDone:
