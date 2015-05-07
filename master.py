@@ -16,6 +16,7 @@ from session import MasterSessionManager
 from RMContainerAllocator import RMContainerAllocator
 from CommitterEventHandler import CommitterEventHandler
 from job import Job, Task
+from pool import Pool
 
 import sys
 import math
@@ -42,7 +43,10 @@ def run(IP, PORT):
     assignedServers = []
     serverAssignments = defaultdict(list)
     
-    job = Job(work, rpcManager, eventQueue)
+    pool = Pool()
+    
+    job = Job(work, pool, rpcManager, eventQueue)
+    pool.schedule(job)
     
     # Simulate Delayed Job init and start.
     eventQueue.append(("JOB_INIT", job))
@@ -52,7 +56,7 @@ def run(IP, PORT):
         # Simulate "event delivery"
         containerAllocator.pushNewEvents(eventQueue)
         committerEventHandler.pushNewEvents(eventQueue)
-        job.pushNewEvents(eventQueue)
+        pool.pushNewEvents(eventQueue)
         eventQueue.clear()
         
         # Simulate async mechanisums
@@ -69,8 +73,8 @@ def run(IP, PORT):
             print "serverList change"
         serverList = sessionManager.serverList()
     
-        # Run rules engine
-        job.applyRules()
+        # Run tasks
+        pool.poll()
 
         if job.getStatus() == "SUCCEEDED" and not printed:
             print "Job Complete"

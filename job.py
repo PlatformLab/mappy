@@ -4,21 +4,21 @@ import time
 from collections import deque
 
 class Job(object):
-    def __init__(self, workList, rpcManager, eventQueue):
+    def __init__(self, workList, pool, rpcManager, eventQueue):
         self.status = "NEW"
         self.scheduled = False
         self.setup = False
         self.killed = False
         self.workList = workList
         self.taskList = []
+        self.pool = pool
         self.rpcManager = rpcManager
         self.eventQueue = eventQueue
         self.eventsIn = deque()
+        # schedule itself to run
+        self.pool.schedule(self)
     
     def applyRules(self):
-        # Turn events into state changes
-        self.handleEvents()
-        
         if self.status == "NEW":
             pass
         elif self.status == "INITED":
@@ -37,7 +37,7 @@ class Job(object):
                     break
             if allDone:
                 self.eventQueue.append(("JOB_COMMIT", self))
-                self.status = "COMMITTING"             
+                self.status = "COMMITTING"
         elif self.status == "COMMITTING":
             pass
         elif self.status == "SUCCEEDED":
@@ -45,18 +45,19 @@ class Job(object):
         elif self.status == "FAILED":
             for task in self.taskList:
                 task.kill()
-        
-        # Check for complete of failed tasks
-        for task in self.taskList:
-            task.applyRules()
+                
+        if self.getStatus() in ("SUCCEEDED", "KILLED_OR_FAILED"):
+            self.pool.deschedule(self)
     
-    def handleEvents(self):
+    def handleEvents(self, newEvents):
+        self.eventsIn += newEvents
+
         # Turn events into state changes
         for eventType, value in list(self.eventsIn):
             # JobEventType Events
             if eventType == "JOB_INIT":
                 if self.status == "NEW":
-                    self.taskList =[Task(w, self.rpcManager, self.eventQueue) for w in self.workList]
+                    self.taskList =[Task(w, self.pool, self.rpcManager, self.eventQueue) for w in self.workList]
                     self.status = "INITED"
                     print "INITED"
             if eventType == "JOB_START":
@@ -92,13 +93,6 @@ class Job(object):
             if eventType == "JOB_DIAGNOSTIC_UPDATE":
                 # Do some update
                 pass
-            # TaskAttemptEventType Events
-            if eventType == "TA_ASSIGNED":
-                taskAttempt, container = value
-                taskAttempt.assignContainer(container)
-            if eventType == "TA_KILL":
-                taskAttempt, container = value
-                taskAttempt.kill()
         self.eventsIn.clear()
     
     def pushNewEvents(self, newEvents):
@@ -123,15 +117,19 @@ class Job(object):
         return s
 
 class Task(object):
-    def __init__(self, work, rpcManager, eventQueue):
+    def __init__(self, work, pool, rpcManager, eventQueue):
         self.commitLocator = None
         self.scheduled = False
         self.killed = False
         self.work = work
         self.taskAttempts = []
         self.time = None
+        self.pool = pool
         self.rpcManager = rpcManager
         self.eventQueue = eventQueue
+        self.eventsIn = deque()
+        # schedule itself to run
+        self.pool.schedule(self)
     
     def applyRules(self):
         # Make sure the subtasks are run
@@ -145,13 +143,18 @@ class Task(object):
             else:
                 if self.commitLocator != None:
                     taskAttempt.kill()
-                taskAttempt.applyRules()
         
         if not self.taskResourcesAvailable():
             self.kill()
             
         if self.scheduled and not self.killed and self.commitLocator == None and self.shouldAddAttempt():
-            self.taskAttempts.append(TaskAttempt(self.work, self.rpcManager, self.eventQueue))
+            self.taskAttempts.append(TaskAttempt(self.work, self.pool, self.rpcManager, self.eventQueue))
+            
+        if self.getStatus() in ("SUCCEEDED", "KILLED_OR_FAILED"):
+            self.pool.deschedule(self)
+            
+    def handleEvents(self, newEvents):
+        pass
         
     def getStatus(self):
         if not self.scheduled:
@@ -179,12 +182,14 @@ class Task(object):
         self.commitLocator = None
         for taskAttempt in self.taskAttempts:
             taskAttempt.kill(container)
+        self.pool.schedule(self)
         
     def nodeCrash(self, container):
         if container == self.commitLocator:
             self.commitLocator = None
         for taskAttempt in self.taskAttempts:
             taskAttempt.nodeCrash(container)
+        self.pool.schedule(self)
     
     def taskResourcesAvailable(self):
         return True 
@@ -193,14 +198,18 @@ class Task(object):
         return "<{0}: {1} {2}>".format(self.work, self.getStatus(), self.commitLocator)
 
 class TaskAttempt(object):
-    def __init__(self, work, rpcManager, eventQueue):
+    def __init__(self, work, pool, rpcManager, eventQueue):
         self.status = "NEW"
         self.container = None
         self.work = work
         self.rpc = None
         self.time = None
+        self.pool = pool
         self.rpcManager = rpcManager
         self.eventQueue = eventQueue
+        self.eventsIn = deque()
+        # schedule itself to run
+        self.pool.schedule(self)
         
     def applyRules(self):
         if self.status == "NEW":
@@ -235,6 +244,23 @@ class TaskAttempt(object):
             if self.rpc and self.rpc.status == "complete":
                 self.rpc = None
                 self.eventQueue.append(("CONTAINER_FAILED", (self, self.container)))
+        
+        if self.getStatus() in ("FAILED", "SUCCEEDED"):
+            self.pool.deschedule(self)
+                
+    def handleEvents(self, newEvents):
+        self.eventsIn += newEvents
+
+        # Turn events into state changes
+        for eventType, value in list(self.eventsIn):
+            # TaskAttemptEventType Events
+            if eventType == "TA_ASSIGNED":
+                taskAttempt, container = value
+                taskAttempt.assignContainer(container)
+            if eventType == "TA_KILL":
+                taskAttempt, container = value
+                taskAttempt.kill()
+        self.eventsIn.clear()
     
     def assignContainer(self, container):
         if self.container == None:
@@ -250,11 +276,13 @@ class TaskAttempt(object):
                 self.rpc = RPC(self.container, None, ("CONTAINER_REMOTE_CLEANUP", self.work))
                 self.rpcManager.send(self.rpc)
             self.status = "FAILED"
+        self.pool.schedule(self)
 
     def nodeCrash(self, container):
         if self.container == container:
             self.rpc = None
             self.status = "FAILED"
+        self.pool.schedule(self)
         
     def getStatus(self):
         if self.status in ("FAILED", "SUCCEEDED") and self.rpc == None:
