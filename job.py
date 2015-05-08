@@ -181,7 +181,7 @@ class Task(object):
         self.killed = True
         self.commitLocator = None
         for taskAttempt in self.taskAttempts:
-            taskAttempt.kill(container)
+            taskAttempt.kill()
         self.pool.schedule(self)
         
     def nodeCrash(self, container):
