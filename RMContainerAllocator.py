@@ -8,10 +8,15 @@ class RMContainerAllocator(object):
         self.sessionManager = sessionManager
         self.eventsIn = deque()
         self.eventsOut = eventQueue
+        # used to simulate async processing
+        self.sleepCounter = 10
         # self.time = time.time()
     
     def heartbeat(self):
-        if len(self.eventsIn) > 0:
+        if self.sleepCounter != 0:
+            self.sleepCounter = self.sleepCounter - 1
+        elif  len(self.eventsIn) > 0:
+            self.sleepCounter = 10
             eventType, value = self.eventsIn.popleft()
             if eventType == "CONTAINER_REQ":
                 taskAttempt, container = value

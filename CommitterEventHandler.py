@@ -4,9 +4,14 @@ class CommitterEventHandler(object):
     def __init__(self, eventQueue):
         self.eventsIn = deque()
         self.eventsOut = eventQueue
+        # used to simulate async processing
+        self.sleepCounter = 10
     
     def heartbeat(self):
-        if len(self.eventsIn) > 0:
+        if self.sleepCounter != 0:
+            self.sleepCounter = self.sleepCounter - 1
+        elif len(self.eventsIn) > 0:
+            self.sleepCounter = 10
             eventType, value = self.eventsIn.popleft()
             if eventType == "JOB_SETUP":
                 self.handleJobSetup(value)
