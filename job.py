@@ -19,11 +19,11 @@ class Job(object):
         self.eventQueue = eventQueue
         self.eventsIn = deque()
         # schedule itself to run
-        self.pool.schedule(self)
+        self.pool.activate(self)
     
     def applyRules(self):
         if self.status != "RUNNING":
-            self.pool.deschedule(self)
+            self.pool.deactivate(self)
         elif self.killed:
             if not self.all_task_done_or_failed():
                 for task in self.taskList:
@@ -115,11 +115,11 @@ class Task(object):
         self.eventQueue = eventQueue
         self.eventsIn = deque()
         # schedule itself to run
-        self.pool.schedule(self)
+        self.pool.activate(self)
     
     def applyRules(self):
         if self.status != "RUNNING":
-            self.pool.deschedule(self)
+            self.pool.deactivate(self)
         elif self.killed:
             if self.all_task_attempts_done_or_failed():
                 self.status = "KILLED_OR_FAILED"
@@ -162,7 +162,7 @@ class Task(object):
         self.killed = True
         for taskAttempt in self.taskAttempts:
             taskAttempt.kill()
-        self.pool.schedule(self)
+        self.pool.activate(self)
         
     def nodeCrash(self, container):
         if self.status != "KILLED_OR_FAILED" and container == self.commitLocator:
@@ -170,7 +170,7 @@ class Task(object):
             self.status = "RUNNING"
         for taskAttempt in self.taskAttempts:
             taskAttempt.nodeCrash(container)
-        self.pool.schedule(self)
+        self.pool.activate(self)
     
     # A check to see if the rescoures like the HDFS stored file are all online.
     def taskResourcesAvailable(self):
@@ -194,11 +194,11 @@ class TaskAttempt(object):
         self.eventQueue = eventQueue
         self.eventsIn = deque()
         # schedule itself to run
-        self.pool.schedule(self)
+        self.pool.activate(self)
         
     def applyRules(self):
         if self.status != "RUNNING":
-            self.pool.deschedule(self)
+            self.pool.deactivate(self)
         elif self.container == None:
             if not self.container_requested:
                 self.eventQueue.append(("CONTAINER_REQ", (self, None)))
@@ -255,12 +255,12 @@ class TaskAttempt(object):
         if self.status == "RUNNING" and self.container != None:
             self.cleanup_rpc = RPC(self.container, None, ("CONTAINER_REMOTE_CLEANUP", self.work))
             self.rpcManager.send(self.cleanup_rpc)
-        self.pool.schedule(self)
+        self.pool.activate(self)
         
     def nodeCrash(self, container):
         if self.container == container:
             self.status = "FAILED"
-        self.pool.schedule(self)
+        self.pool.activate(self)
         
     def getStatus(self):
         return self.status

@@ -46,7 +46,6 @@ def run(IP, PORT):
     pool = Pool()
     
     job = Job(work, pool, rpcManager, eventQueue)
-    pool.schedule(job)
     
     # Simulate Delayed Job init and start.
     eventQueue.append(("JOB_INIT", job))

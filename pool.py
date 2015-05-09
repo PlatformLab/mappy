@@ -10,10 +10,10 @@ class Pool(object):
             t.handleEvents(self.eventsIn)
             t.applyRules()
 
-    def schedule(self, task):
+    def activate(self, task):
         self.taskSet.add(task)
     
-    def deschedule(self, task):
+    def deactivate(self, task):
         self.taskSet.remove(task)
             
     def pushNewEvents(self, newEvents):
