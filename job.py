@@ -50,7 +50,9 @@ class Job(object):
                     break
             if self.tasks_complete:
                 self.eventQueue.append(("JOB_COMMIT", self))
-        elif self.committed:
+        elif not self.committed:
+            pass
+        else:
             self.status = "SUCCEEDED"
     
     def handleEvents(self, newEvents):
@@ -228,9 +230,10 @@ class TaskAttempt(object):
         elif self.commit_rpc.reply == "failed":
             self.eventQueue.append(("CONTAINER_FAILED", (self, self.container)))
             self.status = "FAILED"
-        elif self.status == "RUNNING":
+        else:
             self.status = "SUCCEEDED"
             self.eventQueue.append(("CONTAINER_DEALLOCATE", (self, self.container)))
+
                 
     def handleEvents(self, newEvents):
         self.eventsIn += newEvents
