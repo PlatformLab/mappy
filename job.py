@@ -5,9 +5,12 @@ from collections import deque
 
 class Job(object):
     def __init__(self, workList, pool, rpcManager, eventQueue):
-        self.status = "NEW"
-        self.scheduled = False
+        self.status = "RUNNING"
         self.setup = False
+        self.setup_request_sent = False
+        self.setup_abort_sent = False
+        self.tasks_complete = False
+        self.committed = False
         self.killed = False
         self.workList = workList
         self.taskList = []
@@ -19,35 +22,36 @@ class Job(object):
         self.pool.schedule(self)
     
     def applyRules(self):
-        if self.status == "NEW":
-            pass
-        elif self.status == "INITED":
-            pass 
-        elif self.status == "SETUP":
-            pass
-        elif self.status == "RUNNING":
-            allDone = True
+        if self.status != "RUNNING":
+            self.pool.deschedule(self)
+        elif self.killed:
+            if not self.all_task_done_or_failed():
+                for task in self.taskList:
+                    task.kill()
+            elif self.setup:
+                if not self.setup_abort_sent:
+                    self.eventQueue.append(("JOB_ABORT", self))
+            else:
+                self.status = "FAILED"
+        elif not self.setup:
+            if not self.setup_request_sent:
+                self.eventQueue.append(("JOB_SETUP", self))
+        elif len(self.workList) != len(self.taskList):
+            self.taskList = [Task(w, self.pool, self.rpcManager, self.eventQueue) for w in self.workList]
+        elif not self.tasks_complete:
+            self.tasks_complete = True
             for task in self.taskList:
                 if task.getStatus() == "KILLED_OR_FAILED":
-                    self.status = "FAILED"
-                    allDone = False
+                    self.killed = True
+                    self.tasks_complete = False
                     break
                 if task.getStatus() == "RUNNING":
-                    allDone = False
+                    self.tasks_complete = False
                     break
-            if allDone:
+            if self.tasks_complete:
                 self.eventQueue.append(("JOB_COMMIT", self))
-                self.status = "COMMITTING"
-        elif self.status == "COMMITTING":
-            pass
-        elif self.status == "SUCCEEDED":
-            pass
-        elif self.status == "FAILED":
-            for task in self.taskList:
-                task.kill()
-                
-        if self.getStatus() in ("SUCCEEDED", "KILLED_OR_FAILED"):
-            self.pool.deschedule(self)
+        elif self.committed:
+            self.status = "SUCCEEDED"
     
     def handleEvents(self, newEvents):
         self.eventsIn += newEvents
@@ -55,37 +59,22 @@ class Job(object):
         # Turn events into state changes
         for eventType, value in list(self.eventsIn):
             # JobEventType Events
-            if eventType == "JOB_INIT":
-                if self.status == "NEW":
-                    self.taskList =[Task(w, self.pool, self.rpcManager, self.eventQueue) for w in self.workList]
-                    self.status = "INITED"
-                    print "INITED"
-            if eventType == "JOB_START":
-                if self.status == "INITED":
-                    self.eventQueue.append(("JOB_SETUP", self))
-                    self.status = "SETUP"
-                    print "SETUP"
             if eventType == "JOB_SETUP_COMPLETED":
-                if self.status == "SETUP" and value == self:
+                if self.status == "RUNNING" and not self.setup and value == self:
                     self.setup = True
-                    for task in self.taskList:
-                        task.scheduled = True
-                    self.status = "RUNNING"
-                    print "RUNNING"
             if eventType == "JOB_SETUP_FAILED":
-                if self.status == "SETUP" and value == self:
-                    self.status = "FAILED"
+                if self.status == "RUNNING" and not self.setup and value == self:
+                    self.killed = True
             if eventType == "JOB_COMMIT_COMPLETED":
-                if self.status == "COMMITTING" and value == self:
-                    self.status = "SUCCEEDED"
+                if self.status == "RUNNING" and not self.committed and value == self:
+                    self.committed = True
             if eventType == "JOB_COMMIT_FAILED":
-                if self.status == "COMMITTING" and value == self:
-                    self.status = "FAILED"
+                if self.status == "RUNNING" and not self.committed and value == self:
+                    self.killed = True
             if eventType == "JOB_KILL":
-                self.eventQueue.append(("JOB_ABORT", self))
-                self.status = "FAILED"
+                self.killed = True
             if eventType == "JOB_ABORT_COMPLETED":
-                if self.status == "FAILED" and value == self:
+                if self.killed and value == self:
                     self.setup = False
             if eventType == "JOB_UPDATED_NODES":
                 for task in self.taskList:
@@ -97,18 +86,15 @@ class Job(object):
     
     def pushNewEvents(self, newEvents):
         self.eventsIn += newEvents
+        
+    def all_task_done_or_failed(self):
+        for task in self.taskList:
+            if task.getStatus() == "RUNNING":
+                return False
+        return True
     
     def getStatus(self):
-        if self.setup:
-            for task in self.taskList:
-                if task.getStatus() != "SUCCEEDED":
-                    return "RUNNING"
-            return "SUCCEEDED"
-        else:
-            for task in self.taskList:
-                if task.getStatus() != "KILLED_OR_FAILED":
-                    return "RUNNING"
-            return "FAILED"
+        return self.status
         
     def __str__(self):
         s = ""
@@ -118,8 +104,8 @@ class Job(object):
 
 class Task(object):
     def __init__(self, work, pool, rpcManager, eventQueue):
+        self.status = "RUNNING"
         self.commitLocator = None
-        self.scheduled = False
         self.killed = False
         self.work = work
         self.taskAttempts = []
@@ -132,44 +118,39 @@ class Task(object):
         self.pool.schedule(self)
     
     def applyRules(self):
-        # Make sure the subtasks are run
-        for taskAttempt in list(self.taskAttempts):
-            if taskAttempt.getStatus() == "FAILED":
-                self.taskAttempts.remove(taskAttempt)
-            elif taskAttempt.getStatus() == "SUCCEEDED":
-                if self.commitLocator == None:
-                    self.commitLocator = taskAttempt.container
-                self.taskAttempts.remove(taskAttempt)
-            else:
-                if self.commitLocator != None:
-                    taskAttempt.kill()
-        
-        if not self.taskResourcesAvailable():
-            self.kill()
-            
-        if self.scheduled and not self.killed and self.commitLocator == None and self.shouldAddAttempt():
-            self.taskAttempts.append(TaskAttempt(self.work, self.pool, self.rpcManager, self.eventQueue))
-            
-        if self.getStatus() in ("SUCCEEDED", "KILLED_OR_FAILED"):
+        if self.status != "RUNNING":
             self.pool.deschedule(self)
+        elif self.killed:
+            if self.all_task_attempts_done_or_failed():
+                self.status = "KILLED_OR_FAILED"
+        elif not self.taskResourcesAvailable():
+            self.kill()
+        elif self.commitLocator == None:
+            for taskAttempt in list(self.taskAttempts):
+                if taskAttempt.getStatus() == "FAILED":
+                    self.taskAttempts.remove(taskAttempt)
+                elif taskAttempt.getStatus() == "SUCCEEDED":
+                    if self.commitLocator == None:
+                        self.commitLocator = taskAttempt.container
+                else:
+                    if self.commitLocator != None:
+                        taskAttempt.kill()
+            if self.shouldAddAttempt():
+                self.taskAttempts.append(TaskAttempt(self.work, self.pool, self.rpcManager, self.eventQueue))
+        else:
+            self.status = "SUCCEEDED"
             
     def handleEvents(self, newEvents):
         pass
         
     def getStatus(self):
-        if not self.scheduled:
-            return "NEW"
-
-        if len(self.taskAttempts) == 0:
-            if not self.killed:
-                if self.commitLocator != None:
-                    return "SUCCEEDED"
-                else:
-                    return "RUNNING"
-            else:
-                return "KILLED_OR_FAILED"
-        else:
-            return "RUNNING"
+        return self.status
+        
+    def all_task_attempts_done_or_failed(self):
+        for taskAttempt in self.taskAttempts:
+            if taskAttempt.getStatus() not in ("SUCCEEDED", "FAILED"):
+                return False
+        return True
         
     # Some policy for whether an attempt should be issued.
     # Same affect as if an event T_ADD_SPEC_ATTEMPT was generated
@@ -179,18 +160,19 @@ class Task(object):
             
     def kill(self):
         self.killed = True
-        self.commitLocator = None
         for taskAttempt in self.taskAttempts:
             taskAttempt.kill()
         self.pool.schedule(self)
         
     def nodeCrash(self, container):
-        if container == self.commitLocator:
+        if self.status != "KILLED_OR_FAILED" and container == self.commitLocator:
             self.commitLocator = None
+            self.status = "RUNNING"
         for taskAttempt in self.taskAttempts:
             taskAttempt.nodeCrash(container)
         self.pool.schedule(self)
     
+    # A check to see if the rescoures like the HDFS stored file are all online.
     def taskResourcesAvailable(self):
         return True 
     
@@ -199,10 +181,13 @@ class Task(object):
 
 class TaskAttempt(object):
     def __init__(self, work, pool, rpcManager, eventQueue):
-        self.status = "NEW"
-        self.container = None
         self.work = work
-        self.rpc = None
+        self.status = "RUNNING"
+        self.container = None
+        self.container_requested = False
+        self.launch_rpc = None
+        self.commit_rpc = None
+        self.cleanup_rpc = None
         self.time = None
         self.pool = pool
         self.rpcManager = rpcManager
@@ -212,41 +197,40 @@ class TaskAttempt(object):
         self.pool.schedule(self)
         
     def applyRules(self):
-        if self.status == "NEW":
-            # Generating a CONTAINER_REQ "event"
-            self.eventQueue.append(("CONTAINER_REQ", (self, None)))
-            self.status = "UNASSIGNED"
-        elif self.status == "UNASSIGNED":
-            if self.container != None:
-                self.status = "ASSIGNED"
-        elif self.status == "ASSIGNED":
-            self.rpc = RPC(self.container, None, ("LAUNCH", self.work))
-            self.rpcManager.send(self.rpc)
-            self.status = "RUNNING"
-            self.time = time.time()
-        elif self.status == "RUNNING":
-            if self.rpc.status == "complete":
-                if self.rpc.reply != "failed":
-                    self.rpc = RPC(self.container, None, ("COMMIT", self.work))
-                    self.rpcManager.send(self.rpc)
-                    self.status = "COMMIT_PENDING"
-                else:
-                    self.kill()
-        elif self.status == "COMMIT_PENDING":
-            if self.rpc.status == "complete":
-                if self.rpc.reply != "failed":
-                    self.status = "SUCCEEDED"
-                    self.rpc = None
-                    self.eventQueue.append(("CONTAINER_DEALLOCATE", (self, self.container)))
-                else:
-                    self.kill()
-        elif self.status == "FAILED":
-            if self.rpc and self.rpc.status == "complete":
-                self.rpc = None
-                self.eventQueue.append(("CONTAINER_FAILED", (self, self.container)))
-        
-        if self.getStatus() in ("FAILED", "SUCCEEDED"):
+        if self.status != "RUNNING":
             self.pool.deschedule(self)
+        elif self.container == None:
+            if not self.container_requested:
+                self.eventQueue.append(("CONTAINER_REQ", (self, None)))
+                self.container_requested = True
+        elif self.cleanup_rpc != None:   
+            if self.cleanup_rpc.status == "complete":
+                if self.cleanup_rpc.reply == "failed":
+                    self.cleanup_rpc = RPC(self.container, None, ("CONTAINER_REMOTE_CLEANUP", self.work))
+                    self.rpcManager.send(self.cleanup_rpc)
+                else:
+                    self.eventQueue.append(("CONTAINER_DEALLOCATE", (self, self.container)))
+                    self.status = "FAILED"
+        elif self.launch_rpc == None:
+            self.launch_rpc = RPC(self.container, None, ("LAUNCH", self.work))
+            self.rpcManager.send(self.launch_rpc)
+            self.time = time.time()
+        elif self.launch_rpc.status != "complete":
+            pass
+        elif self.launch_rpc.reply == "failed":
+            self.eventQueue.append(("CONTAINER_FAILED", (self, self.container)))
+            self.status = "FAILED"
+        elif self.commit_rpc == None:
+            self.commit_rpc = RPC(self.container, None, ("COMMIT", self.work))
+            self.rpcManager.send(self.commit_rpc)
+        elif self.commit_rpc.status != "complete":
+            pass
+        elif self.commit_rpc.reply == "failed":
+            self.eventQueue.append(("CONTAINER_FAILED", (self, self.container)))
+            self.status = "FAILED"
+        elif self.status == "RUNNING":
+            self.status = "SUCCEEDED"
+            self.eventQueue.append(("CONTAINER_DEALLOCATE", (self, self.container)))
                 
     def handleEvents(self, newEvents):
         self.eventsIn += newEvents
@@ -268,26 +252,18 @@ class TaskAttempt(object):
             self.container = container
     
     def kill(self):
-        # performs CONTAINER_REMOTE_CLEANUP
-        if self.status == "SUCCEEDED":
-            pass
-        else:
-            if self.container != None:
-                self.rpc = RPC(self.container, None, ("CONTAINER_REMOTE_CLEANUP", self.work))
-                self.rpcManager.send(self.rpc)
-            self.status = "FAILED"
+        if self.status == "RUNNING" and self.container != None:
+            self.cleanup_rpc = RPC(self.container, None, ("CONTAINER_REMOTE_CLEANUP", self.work))
+            self.rpcManager.send(self.cleanup_rpc)
         self.pool.schedule(self)
-
+        
     def nodeCrash(self, container):
         if self.container == container:
-            self.rpc = None
             self.status = "FAILED"
         self.pool.schedule(self)
         
     def getStatus(self):
-        if self.status in ("FAILED", "SUCCEEDED") and self.rpc == None:
-            return self.status
-        return "PENDING"
+        return self.status
                     
     def __str__(self):
         return "<{0}: {1} {2}>".format(self.work, self.status, self.container)

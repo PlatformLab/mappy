@@ -3,21 +3,19 @@
 """Master Map Service.
 
 Usage:
-    master.py [-bs] [-t <tc>] <IP> <PORT>
+    master.py [-b] [-t <tc>] <IP> <PORT>
 
 Options:
   -h --help                 Show this screen.
   -b --background           Run service in background.
   -t --taskcount=<tc>       Number of tasks to be performed [default: 10].
-  -s --simple               Use job_simple implementation.
 """
 from docopt import docopt
 from rpc import RPCManager
 from session import MasterSessionManager
 from RMContainerAllocator import RMContainerAllocator
 from CommitterEventHandler import CommitterEventHandler
-import job
-import job_simple
+from job import Job
 from pool import Pool
 
 import sys
@@ -30,7 +28,7 @@ from collections import defaultdict
 
 work = range(10)
 
-def run(IP, PORT, Job):
+def run(IP, PORT):
     # Simulated "event queue"
     eventQueue = deque()
     
@@ -87,11 +85,7 @@ if __name__ == '__main__':
     args = docopt(__doc__)
     print(args)
     work = range(int(args['--taskcount']))
-    if args['--simple']:
-        JobImpl = job_simple.Job
-    else:
-        JobImpl = job.Job
     if (args['--background']):
         pass
     else:
-        run(args['<IP>'], int(args['<PORT>']), JobImpl)
+        run(args['<IP>'], int(args['<PORT>']))
