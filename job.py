@@ -27,25 +27,25 @@ class Job(object):
             self.pool.deactivate(self)
         elif self.killed:
             if not self.all_task_done_or_failed():
-                # Job was killed but tasks have not died yet; kill all tasks.
+                # Rule 1: Job was killed but tasks have not died yet; kill all tasks.
                 for task in self.taskList:
                     task.kill()
             elif self.setup:
-                # Job was killed after setup occured; 
+                # Rule 2: Job was killed after setup occured; 
                 if not self.setup_abort_sent:
                     self.eventQueue.append(("JOB_ABORT", self))
             else:
-                # Job kill is complete; goal reached.
+                # Rule 3: Job kill is complete; goal reached.
                 self.status = "FAILED"
         elif not self.setup:
-            # Job not yet setup; request the job be setup.
+            # Rule 4: Job not yet setup; request the job be setup.
             if not self.setup_request_sent:
                 self.eventQueue.append(("JOB_SETUP", self))
         elif len(self.workList) != len(self.taskList):
-            # Tasks not yet created and scheudled; create and schedule tasks.
+            # Rule 5: Tasks not yet created and scheudled; create and schedule tasks.
             self.taskList = [Task(w, self.pool, self.rpcManager, self.eventQueue) for w in self.workList]
         elif not self.tasks_complete:
-            # Tasks not complete last iteration; check and commit if complete.
+            # Rule 6: Tasks not complete last iteration; check and commit if complete.
             self.tasks_complete = True
             for task in self.taskList:
                 if task.getStatus() == "KILLED_OR_FAILED":
@@ -58,10 +58,10 @@ class Job(object):
             if self.tasks_complete:
                 self.eventQueue.append(("JOB_COMMIT", self))
         elif not self.committed:
-            # Job not yet committed; nothing to do.
+            # Placeholder for state with nothing to do (Job not yet committed).
             pass
         else:
-            # Job completed tasks and committed; goal reached;
+            # Rule 7: Job completed tasks and committed; goal reached;
             self.status = "SUCCEEDED"
     
     def handleEvents(self, newEvents):
@@ -134,13 +134,13 @@ class Task(object):
             self.pool.deactivate(self)
         elif self.killed:
             if self.all_task_attempts_done_or_failed():
-                # Task killed and all TaskAttempts have stopped; goal reached.
+                # Rule 1: Task killed and all TaskAttempts have stopped; goal reached.
                 self.status = "KILLED_OR_FAILED"
         elif not self.taskResourcesAvailable():
-            # Task preconditions not met (missing resources); fail.
+            # Rule 2: Task preconditions not met (missing resources); fail.
             self.kill()
         elif self.commitLocator == None:
-            # Task not complete last iteration; check and add attempt if needed.
+            # Rule 3: Task not complete last iteration; check and add attempt if needed.
             for taskAttempt in list(self.taskAttempts):
                 if taskAttempt.getStatus() == "FAILED":
                     self.taskAttempts.remove(taskAttempt)
@@ -153,7 +153,7 @@ class Task(object):
             if self.shouldAddAttempt():
                 self.taskAttempts.append(TaskAttempt(self.work, self.pool, self.rpcManager, self.eventQueue))
         else:
-            # Task completed; goal reached.
+            # Rule 4: Task completed; goal reached.
             self.status = "SUCCEEDED"
             
     def handleEvents(self, newEvents):
@@ -217,7 +217,7 @@ class TaskAttempt(object):
             # In goal state (SUCCEEDED or FAILED); deactivate.
             self.pool.deactivate(self)
         elif self.container == None:
-            # No container allocated; request container.
+            # Rule 1: No container allocated; request container.
             if not self.container_requested:
                 self.eventQueue.append(("CONTAINER_REQ", (self, None)))
                 self.container_requested = True
@@ -225,38 +225,38 @@ class TaskAttempt(object):
             # Cleanup requested (attempt killed); ensure cleanup occurs.
             if self.cleanup_rpc.status == "complete":
                 if self.cleanup_rpc.reply == "failed":
-                    # Cleanup RPC failed; retry.
+                    # Rule 2: Cleanup RPC failed; retry.
                     self.cleanup_rpc = RPC(self.container, None, ("CONTAINER_REMOTE_CLEANUP", self.work))
                     self.rpcManager.send(self.cleanup_rpc)
                 else:
-                    # Cleanup RPC completed; release container, goal reached.
+                    # Rule 3: Cleanup RPC completed; release container, goal reached.
                     self.eventQueue.append(("CONTAINER_DEALLOCATE", (self, self.container)))
                     self.status = "FAILED"
         elif self.launch_rpc == None:
-            # Attempt not launched; launch.
+            # Rule 4: Attempt not launched; launch.
             self.launch_rpc = RPC(self.container, None, ("LAUNCH", self.work))
             self.rpcManager.send(self.launch_rpc)
             self.time = time.time()
         elif self.launch_rpc.status != "complete":
-            # Attempt running; nothing to do.
+            # Placeholder for state with nothing to do (Attempt running).
             pass
         elif self.launch_rpc.reply == "failed":
-            # Attempt failed; report container failure, goal reached.
+            # Rule 5: Attempt failed; report container failure, goal reached.
             self.eventQueue.append(("CONTAINER_FAILED", (self, self.container)))
             self.status = "FAILED"
         elif self.commit_rpc == None:
-            # Attempt complete but not committed; request commit.
+            # Rule 6: Attempt complete but not committed; request commit.
             self.commit_rpc = RPC(self.container, None, ("COMMIT", self.work))
             self.rpcManager.send(self.commit_rpc)
         elif self.commit_rpc.status != "complete":
-            # Attempt committing; nothing to do.
+            # Placeholder for state with nothing to do (Attempt committing).
             pass
         elif self.commit_rpc.reply == "failed":
-            # Commit failed; report container failure, goal reached.
+            # Rule 7: Commit failed; report container failure, goal reached.
             self.eventQueue.append(("CONTAINER_FAILED", (self, self.container)))
             self.status = "FAILED"
         else:
-            # Commit succeeded; release container, goal reached.
+            # Rule 8: Commit succeeded; release container, goal reached.
             self.status = "SUCCEEDED"
             self.eventQueue.append(("CONTAINER_DEALLOCATE", (self, self.container)))
 
