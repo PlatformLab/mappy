@@ -1,33 +1,38 @@
 # *mappy*
 
-*mappy* is an implementation of the Hadoop MapReduce scheduler that shows what
-an equivalent job scheduler would look like if a rules-based approach were
-applied. *mappy* reimplements functionality provided by 3 classes in the Hadoop
-Java implementation:
-
+*mappy* is a re-implementation of the Hadoop MapReduce scheduler written to
+demonstrate a [rules-based coding style](https://ramcloud.atlassian.net/wiki/download/attachments/6848671/dcft.pdf)
+and to highlight the benefits of the technique. *mappy*'s job scheduler is
+equivalent to Hadoop's, and it reimplements the functionality provided by 3
+classes in the Hadoop Java implementation:
 
 - [JobImpl.java](reference/JobImpl.java#L239)
 - [TaskImpl.java](reference/TaskImpl.java#L147)
 - [TaskAttemptImpl.java](reference/TaskAttemptImpl.java#L209)
 
-More specifically, *mappy* reimplements the functionality provided by the 3
-state machines found in JobImpl.java, TaskImpl.java, and TaskAttemptImpl.java
-as 3 rules engines in [job.py](job.py):
+Specifically, *mappy* reimplements the functionality provided by the 3 state
+machines found in JobImpl.java, TaskImpl.java, and TaskAttemptImpl.java, which
+form the core of Hadoop's job scheduler and its fault handling. Each state
+machine corresponds to a *task* (our term for a grouped set of rules and the
+state variables they act on) in [job.py](job.py).  Here are the
+```applyRules``` methods that implement the rules for each task type:
 
 - [Job](job.py#L24)
 - [Task](job.py#L131)
 - [TaskAttempt](job.py#L215)
 
-The Hadoop event-driven state machines, not surprisingly, relies heavily on
-events. For parity, the *mappy* implementation uses the same event names for
-events used to interact with modules outside the 3 classes being reimplemented.
+Hadoop's event-driven state machines use events heavily to communicate
+between the job scheduler and the outside world, other modules, and sometimes
+even internally between the components of the job scheduler.  For parity and
+congruence, the *mappy* implementation uses the same event names for events
+used to interact with modules outside the 3 classes being reimplemented.
 Events that Hadoop used to communicate between the 3 classes were eliminated
 with equivalent functionality implemented in a more rules-based style.
 
-Although *mappy*'s equivalency the original Hadoop implementation was primarily
-verified by hand, as a sanity check we also built a mock MapReduce
-implementation around [job.py](job.py) to run the scheduler. The mock
-implementation provides the following:
+*mappy*'s equivalence to the Hadoop implementation was verified by hand, and we
+have also built a mock MapReduce implementation around [job.py](job.py) to run
+the scheduler as an additional sanity check.
+The mock implementation provides the following:
 
 - A "worker" that mocks the behavior of a Hadoop container and simply accepts
   "work" and responds asynchronously after waiting for certain about of time.

@@ -134,7 +134,7 @@ class Task(object):
             self.pool.deactivate(self)
         elif self.killed:
             if self.all_task_attempts_done_or_failed():
-                # Task killed and all TackAttempts have stopped; goal reached.
+                # Task killed and all TaskAttempts have stopped; goal reached.
                 self.status = "KILLED_OR_FAILED"
         elif not self.taskResourcesAvailable():
             # Task preconditions not met (missing resources); fail.
