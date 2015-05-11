@@ -14,7 +14,7 @@ Specifically, *mappy* reimplements the functionality provided by the 3 state
 machines found in JobImpl.java, TaskImpl.java, and TaskAttemptImpl.java, which
 form the core of Hadoop's job scheduler and its fault handling. Each state
 machine corresponds to a *task* (our term for a grouped set of rules and the
-state variables they act on) in [job.pu](job.py).  Here are the
+state variables they act on) in [job.py](job.py).  Here are the
 ```applyRules``` methods that implement the rules for each task type:
 
 - [Job](job.py#L24)
