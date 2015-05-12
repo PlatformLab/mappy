@@ -1,38 +1,54 @@
 # *mappy*
 
 *mappy* is a re-implementation of the Hadoop MapReduce scheduler written to
-demonstrate a [rules-based coding style](https://ramcloud.atlassian.net/wiki/download/attachments/6848671/dcft.pdf)
-and to highlight the benefits of the technique. *mappy*'s job scheduler is
+demonstrate a [rules-based coding
+style](https://ramcloud.atlassian.net/wiki/download/attachments/6848671/dcft.pdf
+ ) and to highlight the benefits of the technique. *mappy*'s job scheduler is
 equivalent to Hadoop's, and it reimplements the functionality provided by 3
-classes in the Hadoop Java implementation:
+classes in the Hadoop Java implementation: JobImpl, TaskImpl, and
+TaskAttemptImpl. Each of the 3 classes implements an event-driven state machine
+and together form the core of Hadoop's job scheduler and its fault handling.
+Each state machine is defined by specifying what can be visualized as a
+transition table. The implementation explicitly specifies each transition with
+a start state, end state, trigger event, and transition action. The implemented
+"transition table" for each class can be found at the following locations:
 
-- [JobImpl.java](reference/JobImpl.java#L239)
-- [TaskImpl.java](reference/TaskImpl.java#L147)
-- [TaskAttemptImpl.java](reference/TaskAttemptImpl.java#L209)
+- [JobImpl.StateMachineFactory](reference/JobImpl.java#L239)
+- [TaskImpl.StateMachineFactory](reference/TaskImpl.java#L147)
+- [TaskAttemptImpl.StateMachineFactory](reference/TaskAttemptImpl.java#L209)
 
-Specifically, *mappy* reimplements the functionality provided by the 3 state
-machines found in JobImpl.java, TaskImpl.java, and TaskAttemptImpl.java, which
-form the core of Hadoop's job scheduler and its fault handling. Each state
-machine corresponds to a *task* (our term for a grouped set of rules and the
-state variables they act on) in [job.py](job.py).  Here are the
-```applyRules``` methods that implement the rules for each task type:
+Each transition action is itself implemented as a nested class with a member
+function ```transition``` which defines the body of the action.
+[JobImpl.TaskAttemptCompletedEventTransition](reference/JobImpl.java#L1779) is
+an example of a relatively involved action where as
+[JobImpl.KillInitedJobTransition](reference/JobImpl.java#L1743),
+[JobImpl.KilledDuringSetupTransition](reference/JobImpl.java#L1754), and
+[JobImpl.KilledDuringCommitTransition](reference/JobImpl.java#L2030) show 3
+transitions that are near identical.
 
-- [Job](job.py#L24)
-- [Task](job.py#L131)
-- [TaskAttempt](job.py#L215)
+*mappy* reimplements the functionality provided by the 3 state machines found
+in JobImpl.java, TaskImpl.java, and TaskAttemptImpl.java. Each state machine
+corresponds to a *task* (our term for a grouped set of rules and the state
+variables they act on) in [job.py](job.py). Here are the ```applyRules```
+methods that implement the rules for each task type:
 
-Hadoop's event-driven state machines use events heavily to communicate
-between the job scheduler and the outside world, other modules, and sometimes
-even internally between the components of the job scheduler.  For parity and
+- [Job.applyRules()](job.py#L24)
+- [Task.applyRules()](job.py#L131)
+- [TaskAttempt.applyRules()](job.py#L215)
+
+Hadoop's event-driven state machines use events heavily to communicate between
+the job scheduler and the outside world, other modules, and sometimes even
+internally between the components of the job scheduler. For parity and
 congruence, the *mappy* implementation uses the same event names for events
-used to interact with modules outside the 3 classes being reimplemented.
-Events that Hadoop used to communicate between the 3 classes were eliminated
-with equivalent functionality implemented in a more rules-based style.
+used to interact with modules outside the 3 classes being reimplemented. Events
+that Hadoop used to communicate internally between the job scheduler's 3 state
+machine classes were replaced with equivalent functionality implemented in a
+more rules-based style.
 
 *mappy*'s equivalence to the Hadoop implementation was verified by hand, and we
 have also built a mock MapReduce implementation around [job.py](job.py) to run
-the scheduler as an additional sanity check.
-The mock implementation provides the following:
+the scheduler as an additional sanity check. The mock implementation provides
+the following:
 
 - A "worker" that mocks the behavior of a Hadoop container and simply accepts
   "work" and responds asynchronously after waiting for certain about of time.
