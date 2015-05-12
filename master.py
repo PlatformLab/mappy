@@ -1,13 +1,12 @@
 #!/usr/bin/env python
 
-"""Master Map Service.
+"""MapReduce Master.
 
 Usage:
-    master.py [-b] [-t <tc>] <IP> <PORT>
+    master.py [-t <tc>] <IP> <PORT>
 
 Options:
   -h --help                 Show this screen.
-  -b --background           Run service in background.
   -t --taskcount=<tc>       Number of tasks to be performed [default: 10].
 """
 from docopt import docopt
@@ -18,13 +17,8 @@ from CommitterEventHandler import CommitterEventHandler
 from job import Job
 from pool import Pool
 
-import sys
-import math
 from multiprocessing import Queue
 from collections import deque
-import time
-from random import choice
-from collections import defaultdict
 
 work = range(10)
 
@@ -41,7 +35,6 @@ def run(IP, PORT):
     printed = False;
     serverList = []
     assignedServers = []
-    serverAssignments = defaultdict(list)
     
     pool = Pool()
     
@@ -84,7 +77,4 @@ if __name__ == '__main__':
     args = docopt(__doc__)
     print(args)
     work = range(int(args['--taskcount']))
-    if (args['--background']):
-        pass
-    else:
-        run(args['<IP>'], int(args['<PORT>']))
+    run(args['<IP>'], int(args['<PORT>']))

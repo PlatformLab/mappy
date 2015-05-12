@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-"""Map Service Worker.
+"""MapReduce Worker (Container).
 
 Usage:
     worker.py [-br] [(-d <dr> -t <ttl>)] <IP> <PORT> <MASTER_IP> <MASTER_PORT>
