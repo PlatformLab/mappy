@@ -36,6 +36,18 @@ methods that implement the rules for each task type:
 - [Task.applyRules()](job.py#L131)
 - [TaskAttempt.applyRules()](job.py#L215)
 
+The rules-based implementation of the MapReduce scheduler is significantly
+simpler than the state machine implementation: a total of 19 rules in 3 tasks
+provided functionality equivalent to the 163 transitions in the state
+implementation. Each of the three ```applyRules``` methods fits in a screen or
+two of code (117 total lines of code and comments between the three
+```applyRules``` methods), which makes it possible to view the entire behavior
+of each task at once. Furthermore, the order of the rules within each
+```applyRules``` method shows the normal order of processing, which also helps
+visualization. In contrast, the state machine implementation required more than
+750 lines of code just to specify the three transition tables, plus another
+1500 lines of code for the transition handlers.
+
 Hadoop's event-driven state machines use events heavily to communicate between
 the job scheduler and the outside world, other modules, and sometimes even
 internally between the components of the job scheduler. For parity and
