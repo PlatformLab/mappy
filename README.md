@@ -2,8 +2,8 @@
 
 *mappy* is a re-implementation of the Hadoop MapReduce scheduler written to
 demonstrate a [rules-based coding
-style](https://ramcloud.atlassian.net/wiki/download/attachments/6848671/dcft.pdf
- ) and to highlight the benefits of the technique. *mappy*'s job scheduler is
+style](https://www.usenix.org/conference/atc15/technical-session/presentation/stutsman)
+and to highlight the benefits of the technique. *mappy*'s job scheduler is
 equivalent to Hadoop's, and it reimplements the functionality provided by 3
 classes in the Hadoop Java implementation: JobImpl, TaskImpl, and
 TaskAttemptImpl. Each of the 3 classes implements an event-driven state machine
